@@ -1,0 +1,35 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: fechadura-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: fechadura_inteligente
+    # Exposto somente em localhost. Em produção, não publique esta porta.
+    # Se já houver um PostgreSQL local na 5432, use POSTGRES_HOST_PORT=5433 (e ajuste DATABASE_URL).
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d fechadura_inteligente"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mosquitto:
+    image: eclipse-mosquitto:2.0.20
+    container_name: fechadura-mosquitto
+    restart: unless-stopped
+    ports:
+      # Para dispositivos na rede local, troque por "1883:1883" (e prefira TLS em 8883).
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/config:/mosquitto/config
+      - mosquitto_data:/mosquitto/data
+
+volumes:
+  postgres_data:
+  mosquitto_data:

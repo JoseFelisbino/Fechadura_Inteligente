@@ -1,0 +1,170 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  VIEWER
+}
+
+enum DeviceStatus {
+  ONLINE
+  OFFLINE
+}
+
+enum PointType {
+  DOOR
+  WINDOW
+}
+
+/// Estado exibido no painel. UNKNOWN = sem comunicação / sem leitura.
+enum PointState {
+  OPEN
+  CLOSED
+  UNKNOWN
+}
+
+enum SensorState {
+  OPEN
+  CLOSED
+}
+
+enum AccessEventType {
+  ACCESS_GRANTED
+  ACCESS_DENIED
+  LOCKOUT_STARTED
+  LOCKOUT_ENDED
+  LOCK_RELEASED
+}
+
+enum Direction {
+  ENTRY
+  EXIT
+  UNKNOWN
+}
+
+enum AlertType {
+  OPEN_TOO_LONG
+  DEVICE_OFFLINE
+}
+
+enum AlertStatus {
+  ACTIVE
+  RESOLVED
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         UserRole @default(VIEWER)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  resolvedAlerts      Alert[]       @relation("AlertResolvedBy")
+  confirmedDirections AccessEvent[] @relation("DirectionConfirmedBy")
+}
+
+model Device {
+  id            String       @id @default(uuid()) @db.Uuid
+  name          String
+  description   String?
+  /// Hash bcrypt da credencial do dispositivo. Nulo até o provisionamento.
+  deviceKeyHash String?
+  status        DeviceStatus @default(OFFLINE)
+  lastSeenAt    DateTime?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  points       MonitoredPoint[]
+  accessEvents AccessEvent[]
+  sensorEvents SensorEvent[]
+  alerts       Alert[]
+}
+
+model MonitoredPoint {
+  id             String       @id @default(uuid()) @db.Uuid
+  name           String
+  location       String
+  type           PointType
+  currentState   PointState   @default(UNKNOWN)
+  /// Última leitura real do sensor (mantida mesmo quando o dispositivo fica sem comunicação).
+  lastKnownState SensorState?
+  /// Início do estado atual (horário do dispositivo). Usado para "aberto há X" e para o alerta.
+  stateChangedAt DateTime?
+  /// Horário do evento mais recente aplicado; eventos mais antigos (reenviados da fila) só entram no histórico.
+  lastEventAt    DateTime?
+  maxOpenSeconds Int          @default(300)
+  deviceId       String       @db.Uuid
+  device         Device       @relation(fields: [deviceId], references: [id])
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  sensorEvents SensorEvent[]
+  alerts       Alert[]
+
+  @@index([deviceId])
+}
+
+model AccessEvent {
+  id                     String          @id @default(uuid()) @db.Uuid
+  externalEventId        String
+  deviceId               String          @db.Uuid
+  device                 Device          @relation(fields: [deviceId], references: [id])
+  eventType              AccessEventType
+  direction              Direction       @default(UNKNOWN)
+  directionConfirmedAt   DateTime?
+  directionConfirmedById String?         @db.Uuid
+  directionConfirmedBy   User?           @relation("DirectionConfirmedBy", fields: [directionConfirmedById], references: [id])
+  occurredAt             DateTime
+  receivedAt             DateTime        @default(now())
+  /// JSON opcional; nunca contém senha ou segredo.
+  metadata               Json?
+
+  @@unique([deviceId, externalEventId])
+  @@index([occurredAt])
+}
+
+model SensorEvent {
+  id               String         @id @default(uuid()) @db.Uuid
+  externalEventId  String
+  deviceId         String         @db.Uuid
+  device           Device         @relation(fields: [deviceId], references: [id])
+  monitoredPointId String         @db.Uuid
+  monitoredPoint   MonitoredPoint @relation(fields: [monitoredPointId], references: [id])
+  state            SensorState
+  occurredAt       DateTime
+  receivedAt       DateTime       @default(now())
+
+  @@unique([deviceId, externalEventId])
+  @@index([monitoredPointId, occurredAt])
+  @@index([occurredAt])
+}
+
+model Alert {
+  id               String          @id @default(uuid()) @db.Uuid
+  type             AlertType
+  status           AlertStatus     @default(ACTIVE)
+  message          String
+  monitoredPointId String?         @db.Uuid
+  monitoredPoint   MonitoredPoint? @relation(fields: [monitoredPointId], references: [id])
+  deviceId         String?         @db.Uuid
+  device           Device?         @relation(fields: [deviceId], references: [id])
+  /// Identifica a ocorrência (ex.: OPEN_TOO_LONG:<ponto>:<início da abertura>).
+  /// Único para garantir um só alerta por ocorrência, mesmo após resolução manual.
+  occurrenceKey    String          @unique
+  createdAt        DateTime        @default(now())
+  resolvedAt       DateTime?
+  resolvedById     String?         @db.Uuid
+  resolvedBy       User?           @relation("AlertResolvedBy", fields: [resolvedById], references: [id])
+  resolutionNote   String?
+
+  @@index([status])
+  @@index([monitoredPointId])
+}

@@ -1,0 +1,8 @@
+# Backend: somente leitura dos tópicos dos dispositivos.
+user backend
+topic read home/devices/#
+
+# Cada dispositivo (usuário = deviceId) só publica nos próprios tópicos.
+pattern write home/devices/%u/events/access
+pattern write home/devices/%u/events/sensors
+pattern write home/devices/%u/status

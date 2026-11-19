@@ -1,0 +1,14 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+*.log
+
+# Credenciais do broker (geradas localmente)
+mosquitto/config/passwd
+
+# Firmware
+firmware/**/.pio/
+firmware/**/include/secrets.h

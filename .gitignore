@@ -11,4 +11,4 @@ mosquitto/config/passwd
 
 # Firmware
 firmware/**/.pio/
-firmware/**/include/secrets.h
+firmware/**/secrets.h

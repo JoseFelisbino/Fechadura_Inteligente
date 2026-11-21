@@ -1,36 +1,43 @@
 import mqtt, { type MqttClient } from 'mqtt';
 import { env } from '../config/env';
 import { logger } from '../utils/logger';
-import { handleMqttMessage } from './handlers';
-import { SUBSCRIPTIONS } from './topics';
+import { tratarMensagemMqtt } from './handlers';
+import { ASSINATURAS } from './topicos';
+import { transporte } from './transporte';
 
 let client: MqttClient | null = null;
 
-export function startMqtt(): MqttClient | null {
+export function iniciarMqtt(): MqttClient | null {
   if (!env.MQTT_URL) {
-    logger.info('MQTT desabilitado (MQTT_URL vazio). Usando somente as rotas HTTP de dispositivos.');
+    logger.info('MQTT desabilitado (MQTT_URL vazio).');
     return null;
   }
 
   client = mqtt.connect(env.MQTT_URL, {
     username: env.MQTT_USERNAME || undefined,
     password: env.MQTT_PASSWORD || undefined,
-    clientId: `fechadura-backend-${process.pid}`,
-    clean: false, // sessão persistente: recebe mensagens QoS 1 enviadas enquanto o backend estava fora
+    clientId: 'fechadura-backend',
+    clean: false, // sessão persistente: recebe os eventos (QoS 1) enviados enquanto o backend estava fora
     reconnectPeriod: 5000,
     connectTimeout: 10_000,
   });
 
+  transporte.definir((topico, mensagem) => {
+    if (!client?.connected) return false;
+    client.publish(topico, mensagem, { qos: 1 });
+    return true;
+  });
+
   client.on('connect', () => {
     logger.info(`MQTT conectado em ${env.MQTT_URL}.`);
-    client!.subscribe(SUBSCRIPTIONS, { qos: 1 }, (err) => {
+    client!.subscribe(ASSINATURAS, { qos: 1 }, (err) => {
       if (err) logger.error('MQTT: falha ao assinar tópicos', { message: err.message });
     });
   });
 
-  client.on('message', (topic, payload) => {
-    handleMqttMessage(topic, payload).catch((err) =>
-      logger.error(`MQTT: erro ao processar ${topic}`, { message: (err as Error).message }),
+  client.on('message', (topico, payload) => {
+    tratarMensagemMqtt(topico, payload).catch((err) =>
+      logger.error(`MQTT: erro ao processar ${topico}`, { message: (err as Error).message }),
     );
   });
 
@@ -40,7 +47,7 @@ export function startMqtt(): MqttClient | null {
   return client;
 }
 
-export async function stopMqtt() {
+export async function pararMqtt() {
   if (client) await client.endAsync();
   client = null;
 }

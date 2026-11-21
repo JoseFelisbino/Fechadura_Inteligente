@@ -1,64 +1,36 @@
 import { Router } from 'express';
-import { alertController } from '../controllers/alert.controller';
-import { authController } from '../controllers/auth.controller';
-import { deviceEventController } from '../controllers/device-event.controller';
-import { deviceController } from '../controllers/device.controller';
-import { eventController } from '../controllers/event.controller';
-import { monitoredPointController } from '../controllers/monitored-point.controller';
+import * as c from '../controllers/fechadura.controller';
 import { streamController } from '../controllers/stream.controller';
-import { requireAuth, requireRole } from '../middlewares/auth';
-import { csrfProtection } from '../middlewares/csrf';
-import { requireDevice } from '../middlewares/device-auth';
-import { deviceRateLimit, loginRateLimit, sensitiveRateLimit } from '../middlewares/rate-limit';
 
+/** Rotas da API. Sem autenticação: protótipo de demonstração para a rede local. */
 export function buildRouter() {
-  const api = Router();
+  const r = Router();
 
-  api.get('/health', (_req, res) => {
-    res.json({ data: { status: 'ok', time: new Date().toISOString() } });
+  r.get('/health', (_req, res) => {
+    res.json({ data: { status: 'ok' } });
   });
 
-  // ---- Eventos de dispositivos: autenticação própria (X-Device-Id / X-Device-Key), sem cookie.
-  const deviceEvents = Router();
-  deviceEvents.use(deviceRateLimit, requireDevice);
-  deviceEvents.post('/access', deviceEventController.access);
-  deviceEvents.post('/sensor', deviceEventController.sensor);
-  deviceEvents.post('/heartbeat', deviceEventController.heartbeat);
-  api.use('/device-events', deviceEvents);
+  r.get('/estado', c.estado);
+  r.get('/leituras', c.leituras);
 
-  // ---- Painel: rotas autenticadas por cookie, protegidas contra CSRF.
-  const panel = Router();
-  panel.use(csrfProtection);
+  r.get('/eventos', c.eventos);
+  r.get('/eventos/por-hora', c.eventosPorHora);
 
-  panel.post('/auth/login', loginRateLimit, authController.login);
-  panel.post('/auth/logout', authController.logout);
-  panel.get('/auth/me', requireAuth, authController.me);
+  r.get('/alertas', c.alertas);
+  r.patch('/alertas/:id/resolver', c.resolver);
 
-  panel.use(requireAuth);
+  r.get('/senhas', c.senhas);
+  r.get('/senhas/:slot', c.senha);
+  r.put('/senhas/:slot', c.salvarSenha);
+  r.delete('/senhas/:slot', c.apagarSenha);
 
-  const admin = requireRole('ADMIN');
+  r.post('/comandos', c.novoComando);
+  r.get('/comandos/:id', c.comando);
 
-  panel.get('/stream', streamController);
+  r.get('/configuracao', c.configuracao);
+  r.put('/configuracao', c.salvarConfiguracao);
 
-  panel.get('/devices', deviceController.list);
-  panel.get('/devices/:id', deviceController.get);
-  panel.get('/devices/:id/status', deviceController.status);
-  panel.post('/devices', sensitiveRateLimit, admin, deviceController.create);
-  panel.patch('/devices/:id', sensitiveRateLimit, admin, deviceController.update);
+  r.get('/stream', streamController);
 
-  panel.get('/monitored-points', monitoredPointController.list);
-  panel.get('/monitored-points/:id', monitoredPointController.get);
-  panel.get('/monitored-points/:id/events', monitoredPointController.events);
-  panel.post('/monitored-points', sensitiveRateLimit, admin, monitoredPointController.create);
-  panel.patch('/monitored-points/:id', sensitiveRateLimit, admin, monitoredPointController.update);
-
-  panel.get('/events', eventController.list);
-  panel.patch('/events/access/:id/direction', sensitiveRateLimit, eventController.setDirection);
-
-  panel.get('/alerts', alertController.list);
-  panel.get('/alerts/active', alertController.active);
-  panel.patch('/alerts/:id/resolve', sensitiveRateLimit, alertController.resolve);
-
-  api.use(panel);
-  return api;
+  return r;
 }

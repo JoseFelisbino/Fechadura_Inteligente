@@ -1,16 +1,23 @@
-export const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost:3000/api';
+import type {
+  AcessosHora,
+  Alerta,
+  Comando,
+  Configuracao,
+  Estado,
+  Leitura,
+  PaginaEventos,
+  Senha,
+  SlotSenha,
+  TipoComando,
+} from '../types';
 
-export interface ApiErrorDetail {
-  field: string | null;
-  message: string;
-}
+/** Por padrão o app chama /api na mesma origem (o Vite repassa para o backend). */
+export const API_URL: string = import.meta.env.VITE_API_URL || '/api';
 
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
-    public readonly code: string,
     message: string,
-    public readonly details: ApiErrorDetail[] = [],
   ) {
     super(message);
     this.name = 'ApiError';
@@ -19,66 +26,59 @@ export class ApiError extends Error {
 
 type Query = Record<string, string | number | undefined | null>;
 
-function buildUrl(path: string, query?: Query) {
-  const url = new URL(`${API_URL}${path}`);
-  if (query) {
-    for (const [k, v] of Object.entries(query)) {
-      if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
-    }
+async function requisicao<T>(metodo: string, caminho: string, opcoes: { body?: unknown; query?: Query } = {}) {
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(opcoes.query ?? {})) {
+    if (v !== undefined && v !== null && v !== '') params.set(k, String(v));
   }
-  return url.toString();
-}
+  const url = `${API_URL}${caminho}${params.toString() ? `?${params}` : ''}`;
 
-/** Listener chamado quando a API responde 401 (sessão expirada). */
-let unauthorizedHandler: (() => void) | null = null;
-export function onUnauthorized(handler: (() => void) | null) {
-  unauthorizedHandler = handler;
-}
-
-async function request<T>(method: string, path: string, options: { body?: unknown; query?: Query } = {}) {
-  let response: Response;
+  let resposta: Response;
   try {
-    response = await fetch(buildUrl(path, options.query), {
-      method,
-      credentials: 'include', // envia o cookie HttpOnly da sessão
+    resposta = await fetch(url, {
+      method: metodo,
       headers: {
         Accept: 'application/json',
-        // Cabeçalho exigido pelo backend como proteção CSRF.
-        'X-Requested-With': 'XMLHttpRequest',
-        ...(options.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+        ...(opcoes.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
       },
-      body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+      body: opcoes.body !== undefined ? JSON.stringify(opcoes.body) : undefined,
     });
   } catch {
-    throw new ApiError(0, 'NETWORK_ERROR', 'Não foi possível conectar ao servidor.');
+    throw new ApiError(0, 'Sem conexão com o servidor.');
   }
 
-  const json = await response.json().catch(() => null);
-  if (!response.ok) {
-    const err = json?.error;
-    if (response.status === 401 && !path.startsWith('/auth/')) unauthorizedHandler?.();
-    throw new ApiError(
-      response.status,
-      err?.code ?? 'UNKNOWN_ERROR',
-      err?.message ?? 'Erro inesperado.',
-      Array.isArray(err?.details) ? err.details : [],
-    );
+  const json = await resposta.json().catch(() => null);
+  if (!resposta.ok) {
+    const detalhe = json?.error?.details?.[0]?.message;
+    throw new ApiError(resposta.status, detalhe ?? json?.error?.message ?? 'Erro inesperado.');
   }
-  return json as { data: T; meta?: unknown };
+  return json as { data: T; meta?: Record<string, unknown> };
 }
 
+const get = async <T>(caminho: string, query?: Query) => (await requisicao<T>('GET', caminho, { query })).data;
+
 export const api = {
-  async get<T>(path: string, query?: Query): Promise<T> {
-    return (await request<T>('GET', path, { query })).data;
+  estado: () => get<Estado>('/estado'),
+  leituras: (minutos = 10) => get<Leitura[]>('/leituras', { minutos }),
+  acessosPorHora: (data?: string) => get<AcessosHora[]>('/eventos/por-hora', { data }),
+
+  async eventos(filtro: { tipo?: string; de?: string; ate?: string; page?: number; porPagina?: number }) {
+    const res = await requisicao<PaginaEventos['itens']>('GET', '/eventos', { query: filtro });
+    return { itens: res.data, ...(res.meta as Omit<PaginaEventos, 'itens'>) };
   },
-  async getPage<T>(path: string, query?: Query) {
-    const res = await request<T[]>('GET', path, { query });
-    return { items: res.data, meta: res.meta as { page: number; pageSize: number; total: number } };
-  },
-  async post<T>(path: string, body: unknown = {}): Promise<T> {
-    return (await request<T>('POST', path, { body })).data;
-  },
-  async patch<T>(path: string, body: unknown = {}): Promise<T> {
-    return (await request<T>('PATCH', path, { body })).data;
-  },
+
+  alertas: (status?: 'ATIVO' | 'RESOLVIDO') => get<Alerta[]>('/alertas', { status }),
+  resolverAlerta: async (id: string) => (await requisicao<Alerta>('PATCH', `/alertas/${id}/resolver`)).data,
+
+  senhas: () => get<SlotSenha[]>('/senhas'),
+  salvarSenha: async (slot: number, nome: string, senha: string) =>
+    (await requisicao<{ senha: Senha; comando: Comando }>('PUT', `/senhas/${slot}`, { body: { nome, senha } })).data,
+  removerSenha: async (slot: number) => (await requisicao<{ comando: Comando }>('DELETE', `/senhas/${slot}`)).data,
+
+  enviarComando: async (tipo: TipoComando) => (await requisicao<Comando>('POST', '/comandos', { body: { tipo } })).data,
+  comando: (id: string) => get<Comando>(`/comandos/${id}`),
+
+  configuracao: () => get<Configuracao>('/configuracao'),
+  salvarConfiguracao: async (dados: Partial<Configuracao>) =>
+    (await requisicao<{ configuracao: Configuracao; comando: Comando | null }>('PUT', '/configuracao', { body: dados })).data,
 };

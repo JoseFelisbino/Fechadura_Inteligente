@@ -1,37 +1,42 @@
-import { Route, Routes } from 'react-router-dom';
-import { ProtectedRoute } from '../components/ProtectedRoute';
-import { useAuth } from '../contexts/AuthContext';
-import { RealtimeProvider } from '../contexts/RealtimeContext';
+import { lazy, Suspense } from 'react';
+import { Link, Route, Routes } from 'react-router-dom';
+import { Carregando } from '../components/feedback';
 import { AppLayout } from '../layouts/AppLayout';
-import { AlertsPage } from '../pages/AlertsPage';
-import { DashboardPage } from '../pages/DashboardPage';
-import { HistoryPage } from '../pages/HistoryPage';
-import { LoginPage } from '../pages/LoginPage';
-import { MonitoringPage } from '../pages/MonitoringPage';
-import { NotFoundPage } from '../pages/NotFoundPage';
-import { SettingsPage } from '../pages/SettingsPage';
+import { AjustesPage } from '../pages/AjustesPage';
+import { AlertasPage } from '../pages/AlertasPage';
+import { HistoricoPage } from '../pages/HistoricoPage';
+import { InicioPage } from '../pages/InicioPage';
+import { SenhasPage } from '../pages/SenhasPage';
+
+// recharts é a parte mais pesada do app: só baixa quando abrir a tela de gráficos
+const GraficosPage = lazy(() => import('../pages/GraficosPage').then((m) => ({ default: m.GraficosPage })));
 
 export function AppRoutes() {
-  const { user } = useAuth();
   return (
-    <RealtimeProvider enabled={!!user}>
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
+    <Routes>
+      <Route element={<AppLayout />}>
+        <Route index element={<InicioPage />} />
+        <Route path="senhas" element={<SenhasPage />} />
         <Route
+          path="graficos"
           element={
-            <ProtectedRoute>
-              <AppLayout />
-            </ProtectedRoute>
+            <Suspense fallback={<Carregando />}>
+              <GraficosPage />
+            </Suspense>
           }
-        >
-          <Route index element={<DashboardPage />} />
-          <Route path="monitoramento" element={<MonitoringPage />} />
-          <Route path="historico" element={<HistoryPage />} />
-          <Route path="alertas" element={<AlertsPage />} />
-          <Route path="configuracoes" element={<SettingsPage />} />
-          <Route path="*" element={<NotFoundPage />} />
-        </Route>
-      </Routes>
-    </RealtimeProvider>
+        />
+        <Route path="historico" element={<HistoricoPage />} />
+        <Route path="alertas" element={<AlertasPage />} />
+        <Route path="ajustes" element={<AjustesPage />} />
+        <Route
+          path="*"
+          element={
+            <p className="vazio">
+              Página não encontrada. <Link to="/">Voltar ao início</Link>
+            </p>
+          }
+        />
+      </Route>
+    </Routes>
   );
 }

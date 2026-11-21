@@ -1,55 +1,56 @@
-import bcrypt from 'bcrypt';
-import request from 'supertest';
 import { createApp } from '../src/app';
 import { prisma } from '../src/config/prisma';
-import { generateDeviceKey, hashDeviceKey } from '../src/utils/device-key';
+import { tratarMensagemMqtt } from '../src/mqtt/handlers';
+import { TOPICOS } from '../src/mqtt/topicos';
+import { transporte } from '../src/mqtt/transporte';
+import { resetarEstado } from '../src/services/estado.service';
 
 export const app = createApp();
-export const CSRF = { 'X-Requested-With': 'XMLHttpRequest' };
 
-export async function resetDb() {
+/** Mensagens que o backend "publicou" no broker (o transporte real é trocado por este). */
+export const publicados: { topico: string; mensagem: Record<string, unknown> }[] = [];
+let brokerConectado = true;
+
+export function simularBroker(conectado = true) {
+  brokerConectado = conectado;
+}
+
+transporte.definir((topico, mensagem) => {
+  if (!brokerConectado) return false;
+  publicados.push({ topico, mensagem: JSON.parse(mensagem) });
+  return true;
+});
+
+export async function limparTudo() {
   await prisma.$executeRawUnsafe(
-    'TRUNCATE TABLE "Alert", "SensorEvent", "AccessEvent", "MonitoredPoint", "Device", "User" RESTART IDENTITY CASCADE',
+    'TRUNCATE TABLE "Evento", "Leitura", "Senha", "Comando", "Alerta", "Configuracao" RESTART IDENTITY CASCADE',
   );
+  resetarEstado();
+  publicados.length = 0;
+  brokerConectado = true;
 }
 
-export async function createUser(role: 'ADMIN' | 'VIEWER' = 'ADMIN', password = 'senha-forte-123') {
-  const email = `${role.toLowerCase()}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}@teste.com`;
-  const user = await prisma.user.create({
-    data: { name: `Usuário ${role}`, email, role, passwordHash: await bcrypt.hash(password, 4) },
-  });
-  return { user, email, password };
+/** Simula uma mensagem do Arduino chegando pelo broker. */
+export function doArduino(topico: string, dados: unknown, agora = new Date()) {
+  const texto = typeof dados === 'string' ? dados : JSON.stringify(dados);
+  return tratarMensagemMqtt(topico, Buffer.from(texto), agora);
 }
 
-/** Retorna um agente supertest já autenticado (cookie salvo). */
-export async function loginAgent(role: 'ADMIN' | 'VIEWER' = 'ADMIN') {
-  const { email, password, user } = await createUser(role);
-  const agent = request.agent(app);
-  const res = await agent.post('/api/auth/login').set(CSRF).send({ email, password });
-  if (res.status !== 200) throw new Error(`login falhou: ${res.status}`);
-  return { agent, user };
-}
+export const ESTADO_FECHADA = { trava: 'FECHADA', porta: 'FECHADA', distanciaCm: 4, bloqueado: false, alarme: false };
 
-export async function createProvisionedDevice(name = 'ESP32 Teste') {
-  const key = generateDeviceKey();
-  const device = await prisma.device.create({ data: { name, deviceKeyHash: await hashDeviceKey(key) } });
-  return { device, key, headers: { 'X-Device-Id': device.id, 'X-Device-Key': key } };
-}
-
-export async function createPoint(deviceId: string, overrides: Partial<{ name: string; maxOpenSeconds: number; type: 'DOOR' | 'WINDOW' }> = {}) {
-  return prisma.monitoredPoint.create({
-    data: {
-      name: overrides.name ?? 'Porta principal',
-      location: 'Sala',
-      type: overrides.type ?? 'DOOR',
-      maxOpenSeconds: overrides.maxOpenSeconds ?? 60,
-      deviceId,
-    },
-  });
+/** O Arduino manda um estado (e com isso fica online). */
+export function ficarOnline(agora = new Date(), estado: Record<string, unknown> = {}) {
+  return doArduino(TOPICOS.estado, { ...ESTADO_FECHADA, ...estado, online: true }, agora);
 }
 
 let seq = 0;
-export function eventId() {
+export function novoId() {
   seq += 1;
-  return `test-${Date.now()}-${seq}`;
+  return `teste-${Date.now()}-${seq}`;
 }
+
+export function evento(tipo: string, extra: Record<string, unknown> = {}) {
+  return { id: novoId(), tipo, origem: 'SENSOR', ...extra };
+}
+
+export const segundos = (s: number, base = new Date()) => new Date(base.getTime() + s * 1000);

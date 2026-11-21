@@ -1,174 +1,187 @@
-# Fechadura Inteligente e Monitoramento de Aberturas
+# Fechadura Inteligente
 
-Fechadura com senha em teclado 4x4 (ESP32 + relé + solenoide + buzzer) integrada a um
-painel web que monitora portas e janelas por sensores magnéticos, guarda o histórico e
-emite alertas de aberturas esquecidas.
+Projeto Integrador **Automação Residencial Inteligente com IoT** (Sistemas de Informação, UNIBAVE),
+Trilha C: Segurança e Acesso Inteligente.
+
+Fechadura com senha num **Arduino Uno R4 WiFi**: teclado 4x4, micro servo fazendo o papel da porta,
+sensor ultrassônico que confirma se a porta fechou, buzzer, LED e a matriz de LEDs da placa. Os eventos
+vão por **MQTT** para um backend que guarda o histórico no **PostgreSQL**, e um **PWA** mostra tudo em tempo
+real e permite comandar a fechadura pelo celular.
+
+> Protótipo de demonstração: não tem login nem perfis, e as senhas do teclado ficam em texto puro.
+> Use só na rede local.
 
 ```text
 .
-├── backend/     API REST (Node.js, TypeScript, Express, Prisma, PostgreSQL, MQTT, SSE)
-├── frontend/    Painel (React, TypeScript, Vite, React Router)
-├── firmware/    ESP32 (PlatformIO / Arduino)
-├── mosquitto/   Configuração do broker MQTT (ACL por dispositivo)
-└── docker-compose.yml   PostgreSQL + Mosquitto
+├── firmware/fechadura_r4wifi/  Sketch do Uno R4 WiFi (Arduino IDE ou PlatformIO)
+├── backend/                    API (Node.js, TypeScript, Express, Prisma, PostgreSQL, MQTT, SSE)
+├── frontend/                   PWA (React, Vite, vite-plugin-pwa, recharts)
+├── mosquitto/                  Configuração do broker MQTT
+├── docs/ROTEIRO_DEMO.md        Roteiro do pitch (5 minutos)
+└── docker-compose.yml          PostgreSQL + Mosquitto
 ```
 
-## Decisões de arquitetura
+## Como funciona
 
-| Tema | Decisão |
-|---|---|
-| Decisão de abrir a trava | **Somente no firmware.** A senha é validada no ESP32 contra um hash (SHA-256 iterado com salt) gravado na NVS. Nada recebido pela rede aciona o relé. |
-| Canal dispositivo → backend | **MQTT é o canal da versão final** (QoS 1, broker Mosquitto com usuário/senha por dispositivo e ACL). As rotas `POST /api/device-events/*` continuam disponíveis para testes, provisionamento e contingência, com autenticação própria (`X-Device-Id` + `X-Device-Key`). Os dois canais usam os mesmos validadores e serviços. |
-| Tempo real no painel | **Server-Sent Events** (`GET /api/stream`). O fluxo é só servidor → navegador, então o SSE basta: usa HTTP comum, reconecta sozinho, aceita o cookie HttpOnly e não exige outra biblioteca. As mensagens só avisam o que mudou e a tela busca os dados de novo pela API REST. Se o SSE cair, o painel mostra um aviso e passa a recarregar a cada 30 s. |
-| Sessão do painel | JWT (HS256, 8 h) em cookie `HttpOnly`, `SameSite=Lax` e `Secure` em produção. Sem refresh token, por isso não há tabela de sessão. |
-| CSRF | Cookie `SameSite=Lax` **+** cabeçalho obrigatório `X-Requested-With: XMLHttpRequest` em toda requisição que altera estado. Formulários de outros sites não conseguem enviar esse cabeçalho, e um `fetch` de outra origem é barrado no preflight do CORS, que só aceita `FRONTEND_URL`. |
-| Autorização | Perfis `ADMIN` (cadastra e edita dispositivos e pontos) e `VIEWER` (consulta, resolve alertas e confirma a direção de acessos). |
-| Credencial do dispositivo | Gerada **somente no servidor** por `npm run device:provision` e exibida uma única vez no terminal. O banco guarda o hash bcrypt e o Mosquitto guarda o hash PBKDF2. Ela nunca passa pelo frontend, que só mostra "credencial provisionada/pendente". |
-| Senha da fechadura | Definida no primeiro boot a partir de `INITIAL_LOCK_PIN` (em `secrets.h`, fora do Git). Depois é trocada **no próprio teclado**: `A` → senha atual `#` → nova `#` → confirmação `#`. Não existe rota que leia ou altere essa senha. |
-| Bloqueio | 3 senhas incorretas seguidas → bloqueio local de **60 s** (`LOCKOUT_MS`) e alarme no buzzer. O contador volta a zero após um acesso válido ou no fim do bloqueio. O bloqueio fica salvo na NVS, então reiniciar o ESP32 não o encerra. |
-| Entrada/saída | Um sensor magnético não informa a direção. O teclado registra `direction=UNKNOWN` (exibido como "Sem direção identificada"). A direção vem de dois mecanismos opcionais: **(1)** botão interno de saída (`EXIT_BUTTON_PIN`), que gera `EXIT`, ou **(2)** confirmação pelo usuário no Histórico (`PATCH /api/events/access/:id/direction`). |
-| Idempotência | `@@unique([deviceId, externalEventId])` em `AccessEvent` e `SensorEvent`. Um evento repetido responde `200 { duplicate: true }` e não é gravado de novo. O firmware gera IDs `<contador de boot>-<sequência>`. |
-| Horários | `occurredAt` vem do dispositivo quando o NTP está sincronizado. Se faltar, ou se estiver mais de 5 min no futuro, o backend usa `receivedAt`, que é sempre registrado. Eventos antigos reenviados da fila entram no histórico, mas não sobrescrevem um estado mais recente. |
-| Alerta de abertura | Um job a cada 5 s cria `OPEN_TOO_LONG` quando o ponto passa de `maxOpenSeconds`. A coluna única `occurrenceKey` garante **um alerta por abertura**, mesmo após resolução manual. O fechamento resolve o alerta automaticamente. A resolução manual é recusada (409) enquanto o ponto continuar aberto. |
-| Comunicação | Sem heartbeat por 90 s (`HEARTBEAT_TIMEOUT_SECONDS`), ou com o testamento MQTT `OFFLINE`, o dispositivo vira `OFFLINE`, seus pontos viram `UNKNOWN` ("Sem comunicação") e é criado o alerta `DEVICE_OFFLINE`. A última leitura fica em `lastKnownState` e o painel a mostra como **última leitura**, nunca como estado atual. |
-| Fila offline | O firmware guarda até 64 eventos em RAM e os reenvia ao reconectar. Um evento só sai da fila depois do PUBACK do broker. Ao reconectar, o firmware também envia o estado atual de todos os sensores. |
+```text
+ Teclado ─┐                                 ┌──────────── PWA (celular) ────────────┐
+ Botão  ──┤   Uno R4 WiFi                   │ Início · Senhas · Gráficos · Histórico │
+ HC-SR04 ─┤   (decide TUDO localmente)      │ Alertas · Ajustes                      │
+          │   servo · buzzer · LED · matriz └──────────────▲─────────────────────────┘
+          │            │ Wi-Fi (WiFiS3)          REST + SSE │ /api (proxy do Vite)
+          │            ▼                                    │
+          │      Mosquitto (MQTT) ◄────────────► Backend (Express) ──► PostgreSQL
+```
+
+- **A segurança fica no Arduino.** Senha, bloqueio, saída e alarme funcionam sem Wi-Fi. Sem rede, os
+  eventos ficam numa fila (20 em RAM) e são enviados quando a conexão volta.
+- **Tópicos MQTT:** `fechadura/eventos`, `fechadura/estado` (a cada 2 s), `fechadura/status` (testamento
+  LWT), `fechadura/comandos` e `fechadura/comandos/resposta`. Os formatos estão em
+  [firmware/fechadura_r4wifi/README.md](firmware/fechadura_r4wifi/README.md) e em `backend/src/validators/index.ts`.
+- **Backend:** grava eventos (sem duplicar quando o Arduino reenvia), leituras (no máximo 1 a cada 5 s,
+  guardadas por 24 h), senhas, comandos (expiram em 15 s sem resposta), alertas e ajustes.
+- **Alertas** (um por ocorrência): `PORTA_FORCADA` (resolvido ao desligar o alarme), `PORTA_NAO_FECHOU`
+  (resolvido quando a porta fecha), `ABERTA_DEMAIS` (porta aberta mais que o tempo máximo, padrão 30 s) e
+  `OFFLINE` (15 s sem estado, ou o testamento do broker).
+- **PWA:** tempo real por SSE. Se o SSE cair, recarrega a cada 5 s. Sem conexão, mostra a última leitura
+  com o aviso "sem conexão" e desativa os botões.
 
 ## Pré-requisitos
 
-- Node.js 20+ (testado com 24)
-- Docker Desktop **ou** um PostgreSQL 14+ local
-- PlatformIO (extensão do VS Code ou `pip install platformio`) para o firmware
+- Node.js 20+ e Docker Desktop
+- Arduino IDE 2.x (ou PlatformIO) para gravar a placa
 
-## Como executar
+## Como rodar
 
-### 1. Variáveis de ambiente
-
-```bash
-cp backend/.env.example backend/.env
-cp frontend/.env.example frontend/.env
-```
-
-Edite `backend/.env` e defina, no mínimo, `JWT_SECRET` (valor longo e aleatório),
-`MQTT_PASSWORD` e `SEED_ADMIN_PASSWORD`. Se já existir um PostgreSQL local na porta 5432,
-use `POSTGRES_HOST_PORT=5433 docker compose up -d` e troque a porta nas URLs do `.env`.
-
-### 2. Usuário MQTT do backend e serviços
+### 1. Banco e broker (docker compose)
 
 ```bash
-cd backend
-npm install
-npm run mqtt:user                 # grava o usuário "backend" em mosquitto/config/passwd
+cp backend/.env.example backend/.env       # preencha MQTT_PASSWORD (12+ caracteres)
+cd backend && npm install
+npm run mqtt:user                          # cria o usuário do broker em mosquitto/config/passwd
 cd ..
-docker compose up -d              # PostgreSQL + Mosquitto
+docker compose up -d                       # PostgreSQL + Mosquitto
 ```
 
-### 3. Banco de dados
+Se a porta 5432 já estiver ocupada por outro PostgreSQL, crie um `.env` na raiz com
+`POSTGRES_HOST_PORT=5434` e use a mesma porta no `DATABASE_URL` do `backend/.env`.
+
+### 2. Backend
 
 ```bash
 cd backend
-npx prisma migrate deploy         # aplica as migrations (em desenvolvimento: npm run prisma:migrate)
-npm run seed                      # cria o administrador definido em SEED_ADMIN_*
-npm run dev                       # API em http://localhost:3000/api
+npx prisma migrate deploy   # cria as tabelas
+npm run seed                # ajustes padrão + senha do slot 1 (Admin / 1234, a mesma do firmware)
+npm run dev                 # API em http://localhost:3000/api
+npm test                    # testes (usam o schema do DATABASE_URL_TEST)
 ```
 
-### 4. Frontend
+### 3. App (PWA)
 
 ```bash
 cd frontend
 npm install
-npm run dev                       # painel em http://localhost:5173
+npm run dev                 # http://localhost:5173
 ```
 
-### 5. Dispositivo
+O app chama `/api` na mesma origem e o Vite repassa para o backend (`API_PROXY_TARGET`, padrão
+`http://localhost:3000`). Se o seu `frontend/.env` tiver `VITE_API_URL`, apague essa linha: com ela o
+celular tentaria chamar o `localhost` dele mesmo.
 
-1. No painel, em **Configurações**, cadastre o dispositivo e o ponto monitorado (ex.: "Porta principal").
-2. Gere a credencial no servidor (ela aparece **uma única vez**):
-   ```bash
-   cd backend
-   npm run device:provision -- --id <ID do dispositivo>
-   docker compose kill -s SIGHUP mosquitto    # recarrega as senhas do broker
-   ```
-3. Copie `firmware/fechadura_esp32/include/secrets.example.h` para `secrets.h` e preencha
-   Wi-Fi, `MQTT_HOST`, `DEVICE_ID`, `DEVICE_KEY`, o `pointId` de cada sensor e a senha inicial.
-4. `cd firmware/fechadura_esp32 && pio run -t upload && pio device monitor`
-
-Sem hardware, é possível simular o dispositivo pelas rotas HTTP:
+### 4. Sem o Arduino: modo simulação
 
 ```bash
-curl -X POST http://localhost:3000/api/device-events/sensor \
-  -H "Content-Type: application/json" \
-  -H "X-Device-Id: <DEVICE_ID>" -H "X-Device-Key: <DEVICE_KEY>" \
-  -d '{"eventId":"sim-1","pointId":"<POINT_ID>","state":"OPEN"}'
+cd backend
+npm run simular             # estados a cada 2 s, cenas aleatórias e respostas aos comandos
+npm run simular -- --calmo  # só responde aos comandos
 ```
+
+Não rode o simulador com a placa ligada: os dois usam os mesmos tópicos.
+
+### 5. Arduino
+
+Veja [firmware/fechadura_r4wifi/README.md](firmware/fechadura_r4wifi/README.md). Em resumo: instale a placa
+**Arduino UNO R4 Boards** e as bibliotecas **Servo**, **MQTT** (Joel Gaehwiler) e **ArduinoJson**.
+Depois copie `secrets.example.h` para `secrets.h` e preencha o Wi-Fi (2,4 GHz), o IP do computador que roda
+o Mosquitto e o mesmo usuário e senha MQTT do `backend/.env`.
+
+## Abrir e instalar no celular
+
+O service worker (que permite instalar o app) só funciona em `localhost` ou em **HTTPS**. Duas formas:
+
+**A) Túnel HTTPS (mais simples, não instala nada no celular)**
+
+```bash
+cd frontend
+npm run celular                                    # build + vite preview na porta 4173
+cloudflared tunnel --url http://localhost:4173     # em outro terminal
+```
+
+Abra no celular o endereço `https://….trycloudflare.com` que aparece. O endereço muda a cada execução.
+
+**B) Rede local com certificado (mkcert)**
+
+```bash
+mkcert -install                                    # cria a CA local (uma vez)
+mkdir frontend/certs
+mkcert -cert-file frontend/certs/cert.pem -key-file frontend/certs/key.pem 192.168.0.10 localhost
+cd frontend && npm run celular                     # agora em https://192.168.0.10:4173
+```
+
+Troque `192.168.0.10` pelo IP do computador. O celular precisa confiar na CA: copie o `rootCA.pem`
+(`mkcert -CAROOT` mostra onde está) e instale em Configurações → Segurança → Certificados (Android) ou
+Ajustes → Geral → Perfil (iPhone, depois ative em Sobre → Confiança de Certificados).
+
+**Instalar:** no Chrome do Android, menu ⋮ → **Instalar app** (ou o botão em Ajustes). No iPhone (Safari):
+Compartilhar → **Adicionar à Tela de Início**.
+
+## Montagem (ligações)
+
+| Pino | Peça | Função |
+|---|---|---|
+| D9, D8, D7, D6 | Teclado 4x4: linhas 1 a 4 | Senha |
+| D5, D4, D3, D2 | Teclado 4x4: colunas 1 a 4 | |
+| D10 | Servo SG90 (sinal) | A porta: 0° fechada/trancada, 90° aberta |
+| A0 / A1 | HC-SR04: TRIG / ECHO | Porta fechada (perto) ou aberta (longe) |
+| D13 | Buzzer | Bipes, bloqueio e alarme |
+| A4 | LED + resistor de 220 Ω | Status |
+| D12 | Botão de saída (opcional) → GND | Saída pelo lado de dentro |
+| — | Matriz de LEDs 12x8 da placa | Ícones de status |
+
+## Roteiro de teste do hardware
+
+Abra o Monitor Serial (115200). Todos os eventos aparecem lá. `s` mostra o estado, `u` testa o ultrassônico,
+`t` testa LED/buzzer/matriz/servo e `k` mostra as teclas apertadas.
+
+1. **Boot:** o servo vai a 0°, a matriz mostra o cadeado e o LED fica apagado.
+2. **Sensor:** com a porta encostada, `u` deve mostrar poucos cm (≤ 10). Afaste a mão: a distância sobe.
+   "sem eco" = confira VCC/GND do sensor e os fios em A0/A1.
+3. **Senha certa:** `1 2 3 4 #` → servo a 90°, ✓ na matriz, LED aceso, 1 bipe. Depois de 5 s volta a 0°.
+4. **`*`:** digite alguns números e aperte `*`: os pontinhos somem.
+5. **Senha errada:** `9 9 9 9 #` → ✗ e 2 bipes. Repita 3 vezes → cadeado com contagem de 30 s, LED piscando
+   devagar e bipe a cada segundo. Durante o bloqueio, o teclado não responde.
+6. **Saída:** `D 1 2 3 4 #` (ou o botão D12) → a porta abre. No histórico aparece como saída.
+7. **Porta não fechou:** abra com a senha e segure a mão na frente do sensor (longe) até o servo voltar →
+   3 bipes e a porta com "!" na matriz.
+8. **Porta forçada:** com a porta fechada e o servo em 0°, afaste o anteparo do sensor → buzzer contínuo,
+   LED piscando rápido e triângulo na matriz. Digite a senha para desligar.
+9. **Sem Wi-Fi:** desligue o roteador (ou o broker) e repita os passos 3 e 5: tudo continua funcionando.
+   Ao reconectar, os eventos aparecem no histórico do app.
+
+## Requisitos do professor
+
+| Requisito | Onde |
+|---|---|
+| Camada 1: 2 sensores distintos + atuadores | Teclado 4x4 e ultrassônico HC-SR04; servo, buzzer, LED e matriz de LEDs |
+| Camada 2: comunicação sem fio | WiFiS3 + MQTT (Mosquitto) |
+| Camada 3: histórico persistente | PostgreSQL (eventos, leituras, comandos, alertas) via Prisma |
+| Camada 4: dashboard responsivo, gráficos em tempo real e acionamento remoto | PWA: gráficos de distância (ao vivo) e de acessos por hora; abrir/fechar porta, desligar alarme e testar buzzer |
+| Resiliência | Senha, bloqueio, saída e alarme rodam no Arduino; fila offline reenviada ao reconectar |
+| Trilha C | Histórico de entrada/saída (teclado, botão, app), detecção de porta forçada, matriz de LEDs com o status |
 
 ## Testes
 
-```bash
-cd backend && npm test     # Vitest + Supertest em um schema separado (DATABASE_URL_TEST)
-cd frontend && npm test    # Vitest + Testing Library
-```
-
-O backend aplica as migrations no schema `test` antes da suíte e limpa as tabelas antes de
-cada teste. **Bloqueio após 3 tentativas, buzzer e relé precisam ser testados no hardware**
-(roteiro abaixo).
-
-### Roteiro de teste do hardware
-
-1. Senha correta → relé liga por 3 s, evento `ACCESS_GRANTED`/`LOCK_RELEASED` aparece no Histórico.
-2. Três senhas incorretas → buzzer toca 3 s; durante 60 s nenhuma tecla é aceita, inclusive a senha correta; `LOCKOUT_STARTED` e depois `LOCKOUT_ENDED` no Histórico.
-3. Reiniciar o ESP32 durante o bloqueio → o bloqueio é retomado.
-4. Desligar o backend ou o Wi-Fi → a senha correta continua abrindo; ao religar, os eventos da fila chegam ao painel.
-5. Abrir a porta além do limite → alerta "Abertura prolongada"; fechar → alerta resolvido.
-6. Desligar o ESP32 → em até 90 s o painel mostra "Sem comunicação".
-
-## API (prefixo `/api`)
-
-| Método | Rota | Acesso |
-|---|---|---|
-| POST | `/auth/login`, `/auth/logout` · GET `/auth/me` | público / sessão |
-| GET | `/devices`, `/devices/:id`, `/devices/:id/status` | sessão |
-| POST/PATCH | `/devices`, `/devices/:id` | ADMIN |
-| GET | `/monitored-points`, `/monitored-points/:id`, `/monitored-points/:id/events` | sessão |
-| POST/PATCH | `/monitored-points`, `/monitored-points/:id` | ADMIN |
-| GET | `/events?from&to&deviceId&pointId&category&eventType&result&state&page&pageSize` | sessão |
-| PATCH | `/events/access/:id/direction` | sessão |
-| GET | `/alerts?status&type&page&pageSize`, `/alerts/active` | sessão |
-| PATCH | `/alerts/:id/resolve` | sessão |
-| GET | `/stream` (SSE) | sessão |
-| POST | `/device-events/access`, `/device-events/sensor`, `/device-events/heartbeat` | credencial do dispositivo |
-
-Respostas de sucesso: `{ "data": ..., "meta"?: { page, pageSize, total } }`.
-Respostas de erro: `{ "error": { "code", "message", "details": [] } }`.
-
-### Tópicos MQTT
-
-| Tópico | Payload |
-|---|---|
-| `home/devices/{deviceId}/events/access` | `{ eventId, deviceId, eventType, direction, occurredAt?, metadata? }` |
-| `home/devices/{deviceId}/events/sensors` | `{ eventId, deviceId, pointId, eventType: "SENSOR_STATE_CHANGED", state, occurredAt? }` |
-| `home/devices/{deviceId}/status` | heartbeat `{ status: "ONLINE", uptimeMs, queued, rssi, firmware }` ou testamento `{ status: "OFFLINE" }` |
-
-Os payloads são validados com `.strict()`: qualquer campo não previsto, como `password`,
-`pin` ou `code`, faz o evento ser rejeitado.
-
-## Ligações sugeridas (ESP32 DevKit)
-
-| Componente | GPIO |
-|---|---|
-| Teclado (linhas / colunas) | 13, 12, 14, 27 / 26, 25, 33, 32 |
-| Relé (IN) | 23 |
-| Buzzer | 22 |
-| Sensor magnético da porta | 4 (outro terminal no GND) |
-
-> ⚠️ A solenoide usa fonte própria (12 V típico), com diodo de roda livre e relé ou módulo
-> adequado à corrente. A instalação elétrica deve ser validada por pessoa capacitada.
-> O relé fica desligado no boot e em qualquer falha (*fail-secure*). Para uma fechadura que
-> precisa abrir em queda de energia (*fail-safe*), avalie a norma local.
-
-## Segurança em produção
-
-- Use HTTPS no backend e TLS no Mosquitto (porta 8883), e `NODE_ENV=production`.
-- Troque todas as senhas e segredos de exemplo. Não exponha PostgreSQL nem o broker à internet.
-- `.env`, `secrets.h` e `mosquitto/config/passwd` estão no `.gitignore`.
-- Há rate limit no login (10 a cada 15 min), nas rotas de dispositivo e nas operações administrativas.
-- Os logs passam por `redact`, que mascara chaves como `password`, `token` e `key`.
+- `backend`: `npm test` (35 testes: eventos, comandos com resposta e expiração, senhas, alertas, estado,
+  leituras e ajustes) e `npm run typecheck`
+- `frontend`: `npm test` (14 testes) e `npm run typecheck`
+- `firmware`: `pio run` (compila) ou *Verify* na Arduino IDE

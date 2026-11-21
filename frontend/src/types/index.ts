@@ -1,112 +1,102 @@
-export type UserRole = 'ADMIN' | 'VIEWER';
+export type EstadoPorta = 'ABERTA' | 'FECHADA' | 'DESCONHECIDA';
+export type EstadoTrava = 'ABERTA' | 'FECHADA';
 
-export interface User {
+export type TipoEvento =
+  | 'ACESSO_LIBERADO'
+  | 'SENHA_INCORRETA'
+  | 'BLOQUEIO_INICIO'
+  | 'BLOQUEIO_FIM'
+  | 'PORTA_ABERTA'
+  | 'PORTA_FECHADA'
+  | 'PORTA_NAO_FECHOU'
+  | 'PORTA_FORCADA'
+  | 'ALARME_DESLIGADO'
+  | 'SENHA_ALTERADA';
+
+export type Origem = 'TECLADO' | 'TECLADO_SAIDA' | 'BOTAO_SAIDA' | 'APP' | 'SENSOR' | 'SISTEMA';
+
+export interface Evento {
   id: string;
-  name: string;
-  email: string;
-  role: UserRole;
-  createdAt: string;
-  updatedAt: string;
+  idExterno: string;
+  tipo: TipoEvento;
+  origem: Origem;
+  usuario: string | null;
+  ocorridoEm: string;
+  recebidoEm: string;
 }
 
-export type DeviceStatusValue = 'ONLINE' | 'OFFLINE';
-
-export interface Device {
-  id: string;
-  name: string;
-  description: string | null;
-  status: DeviceStatusValue;
-  lastSeenAt: string | null;
-  /** Indica se a credencial já foi provisionada (a credencial em si nunca chega ao frontend). */
-  hasCredential: boolean;
-  pointsCount: number;
-  createdAt: string;
-  updatedAt: string;
+export interface Estado {
+  online: boolean;
+  ultimaComunicacao: string | null;
+  trava: EstadoTrava;
+  porta: EstadoPorta;
+  distanciaCm: number | null;
+  bloqueado: boolean;
+  alarme: boolean;
+  portaDesde: string | null;
+  ultimoAcesso: Evento | null;
+  alertasAtivos: number;
 }
 
-export type PointType = 'DOOR' | 'WINDOW';
-export type PointState = 'OPEN' | 'CLOSED' | 'UNKNOWN';
-export type SensorState = 'OPEN' | 'CLOSED';
-
-export interface MonitoredPoint {
-  id: string;
-  name: string;
-  location: string;
-  type: PointType;
-  currentState: PointState;
-  lastKnownState: SensorState | null;
-  stateChangedAt: string | null;
-  lastEventAt: string | null;
-  openSince: string | null;
-  maxOpenSeconds: number;
-  device: { id: string; name: string; status: DeviceStatusValue; lastSeenAt: string | null };
-  createdAt: string;
-  updatedAt: string;
+export interface Leitura {
+  id: number;
+  distanciaCm: number | null;
+  porta: EstadoPorta;
+  trava: EstadoTrava;
+  criadoEm: string;
 }
 
-export type EventCategory = 'ACCESS' | 'SENSOR';
-export type EventType =
-  | 'ACCESS_GRANTED'
-  | 'ACCESS_DENIED'
-  | 'LOCKOUT_STARTED'
-  | 'LOCKOUT_ENDED'
-  | 'LOCK_RELEASED'
-  | 'SENSOR_STATE_CHANGED';
-export type Direction = 'ENTRY' | 'EXIT' | 'UNKNOWN';
-export type EventResult = 'SUCCESS' | 'FAILURE';
-
-export interface HistoryEvent {
-  id: string;
-  category: EventCategory;
-  eventType: EventType;
-  result: EventResult | null;
-  state: SensorState | null;
-  direction: Direction | null;
-  deviceId: string;
-  deviceName: string;
-  pointId: string | null;
-  pointName: string | null;
-  pointLocation: string | null;
-  occurredAt: string;
-  receivedAt: string;
+export interface AcessosHora {
+  hora: number;
+  liberados: number;
+  negados: number;
 }
 
-export type AlertType = 'OPEN_TOO_LONG' | 'DEVICE_OFFLINE';
-export type AlertStatus = 'ACTIVE' | 'RESOLVED';
+export type TipoAlerta = 'PORTA_FORCADA' | 'PORTA_NAO_FECHOU' | 'ABERTA_DEMAIS' | 'OFFLINE';
 
-export interface Alert {
+export interface Alerta {
   id: string;
-  type: AlertType;
-  status: AlertStatus;
-  message: string;
-  monitoredPoint: { id: string; name: string; location: string; type: PointType } | null;
-  device: { id: string; name: string } | null;
-  createdAt: string;
-  resolvedAt: string | null;
-  resolvedBy: { id: string; name: string } | null;
-  resolutionNote: string | null;
+  tipo: TipoAlerta;
+  status: 'ATIVO' | 'RESOLVIDO';
+  mensagem: string;
+  criadoEm: string;
+  resolvidoEm: string | null;
 }
 
-export interface PageMeta {
-  page: number;
-  pageSize: number;
+export type Sincronizacao = 'PENDENTE' | 'APLICADA' | 'FALHOU' | 'REMOVENDO';
+
+export interface Senha {
+  slot: number;
+  nome: string;
+  senha: string;
+  sincronizacao: Sincronizacao;
+  motivo: string | null;
+  atualizadoEm: string;
+}
+
+export type SlotSenha = Senha | { slot: number; vazio: true };
+
+export type TipoComando = 'ABRIR_PORTA' | 'FECHAR_PORTA' | 'DESLIGAR_ALARME' | 'TESTAR_BUZZER' | 'ENVIAR_ESTADO';
+
+export interface Comando {
+  id: string;
+  tipo: string;
+  status: 'PENDENTE' | 'OK' | 'FALHOU' | 'EXPIRADO';
+  motivo: string | null;
+  criadoEm: string;
+  respondidoEm: string | null;
+}
+
+export interface Configuracao {
+  tempoAberturaMs: number;
+  limiteCm: number;
+  tempoMaxAbertaS: number;
+  atualizadoEm: string;
+}
+
+export interface PaginaEventos {
+  itens: Evento[];
   total: number;
-}
-
-export interface Paginated<T> {
-  items: T[];
-  meta: PageMeta;
-}
-
-export interface EventFilters {
-  from?: string;
-  to?: string;
-  deviceId?: string;
-  pointId?: string;
-  category?: EventCategory;
-  eventType?: EventType;
-  result?: EventResult;
-  state?: SensorState;
-  page?: number;
-  pageSize?: number;
+  page: number;
+  porPagina: number;
 }

@@ -1,44 +1,45 @@
 import { env } from '../config/env';
-import { deviceRepository } from '../repositories/device.repository';
 import { logger } from '../utils/logger';
-import { alertService } from './alert.service';
-import { deviceService } from './device.service';
+import { expirarComandos } from './comando.service';
+import { obterConfiguracao } from './configuracao.service';
+import { limparLeiturasAntigas, verificarEstado } from './estado.service';
+import { aoFinalizarComando } from './senha.service';
 
-/** Marca como sem comunicação os dispositivos cujo heartbeat expirou. */
-export async function checkHeartbeats(now = new Date()) {
-  const cutoff = new Date(now.getTime() - env.HEARTBEAT_TIMEOUT_SECONDS * 1000);
-  const stale = await deviceRepository.findStaleOnline(cutoff);
-  for (const device of stale) {
-    await deviceService.markOffline(device.id, `sem heartbeat há mais de ${env.HEARTBEAT_TIMEOUT_SECONDS} s`, now);
-  }
-  return stale.map((d) => d.id);
-}
-
-export async function runMonitorCycle(now = new Date()) {
-  await checkHeartbeats(now);
-  await alertService.checkOpenTooLong(now);
-}
-
+const LIMPEZA_A_CADA_MS = 10 * 60 * 1000;
+let ultimaLimpeza = 0;
 let timer: NodeJS.Timeout | null = null;
-let running = false;
+let rodando = false;
 
-export function startMonitor() {
-  if (timer) return;
-  timer = setInterval(async () => {
-    if (running) return; // evita execuções sobrepostas
-    running = true;
-    try {
-      await runMonitorCycle();
-    } catch (err) {
-      logger.error('Falha no ciclo de monitoramento', { message: (err as Error).message });
-    } finally {
-      running = false;
-    }
-  }, env.MONITOR_INTERVAL_SECONDS * 1000);
-  logger.info(`Monitor iniciado (intervalo ${env.MONITOR_INTERVAL_SECONDS} s).`);
+/**
+ * Uma rodada do monitor: dispositivo offline, porta aberta demais, comandos sem resposta e
+ * limpeza das leituras antigas. Os testes chamam esta função direto, com o horário que quiserem.
+ */
+export async function rodarMonitor(agora = new Date()) {
+  const config = await obterConfiguracao();
+  await verificarEstado(agora, env.OFFLINE_APOS_SEGUNDOS * 1000, config.tempoMaxAbertaS * 1000);
+
+  const expirados = await expirarComandos(agora, env.COMANDO_EXPIRA_SEGUNDOS * 1000);
+  for (const comando of expirados) await aoFinalizarComando(comando);
+
+  if (agora.getTime() - ultimaLimpeza >= LIMPEZA_A_CADA_MS) {
+    ultimaLimpeza = agora.getTime();
+    await limparLeiturasAntigas(agora);
+  }
 }
 
-export function stopMonitor() {
+export function iniciarMonitor() {
+  timer = setInterval(() => {
+    if (rodando) return;
+    rodando = true;
+    rodarMonitor()
+      .catch((err) => logger.error('Falha no monitor', { message: (err as Error).message }))
+      .finally(() => {
+        rodando = false;
+      });
+  }, env.MONITOR_INTERVALO_MS);
+}
+
+export function pararMonitor() {
   if (timer) clearInterval(timer);
   timer = null;
 }

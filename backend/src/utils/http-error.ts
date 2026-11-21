@@ -1,13 +1,4 @@
-export type ErrorCode =
-  | 'VALIDATION_ERROR'
-  | 'UNAUTHORIZED'
-  | 'INVALID_CREDENTIALS'
-  | 'FORBIDDEN'
-  | 'CSRF_REJECTED'
-  | 'NOT_FOUND'
-  | 'CONFLICT'
-  | 'RATE_LIMITED'
-  | 'INTERNAL_ERROR';
+export type ErrorCode = 'VALIDATION_ERROR' | 'NOT_FOUND' | 'CONFLICT' | 'INTERNAL_ERROR';
 
 export class HttpError extends Error {
   constructor(
@@ -22,12 +13,6 @@ export class HttpError extends Error {
 
   static badRequest(message = 'Dados inválidos.', details: unknown[] = []) {
     return new HttpError(400, 'VALIDATION_ERROR', message, details);
-  }
-  static unauthorized(message = 'Autenticação necessária.') {
-    return new HttpError(401, 'UNAUTHORIZED', message);
-  }
-  static forbidden(message = 'Acesso negado.') {
-    return new HttpError(403, 'FORBIDDEN', message);
   }
   static notFound(message = 'Recurso não encontrado.') {
     return new HttpError(404, 'NOT_FOUND', message);

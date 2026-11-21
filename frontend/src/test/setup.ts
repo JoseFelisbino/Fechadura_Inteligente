@@ -23,7 +23,7 @@ export class MockEventSource {
     this.listeners.get(type)?.delete(fn);
   }
   emit(type: string, data: unknown = {}) {
-    if (type === 'ready') this.readyState = 1;
+    if (type === 'pronto') this.readyState = 1;
     this.listeners.get(type)?.forEach((fn) => fn(new MessageEvent(type, { data: JSON.stringify(data) })));
   }
   fail() {
@@ -41,3 +41,11 @@ afterEach(() => {
   cleanup();
   MockEventSource.instances = [];
 });
+
+// O recharts mede o container com ResizeObserver, que o jsdom não tem.
+class ResizeObserverFalso {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+(globalThis as unknown as { ResizeObserver: typeof ResizeObserverFalso }).ResizeObserver ??= ResizeObserverFalso;

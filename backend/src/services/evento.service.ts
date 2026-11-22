@@ -52,6 +52,8 @@ export async function registrarEvento(dados: EventoRecebido, agora = new Date())
   // Eventos que abrem ou resolvem alertas
   if (evento.tipo === 'PORTA_FORCADA') await abrirAlerta('PORTA_FORCADA', agora);
   if (evento.tipo === 'PORTA_NAO_FECHOU') await abrirAlerta('PORTA_NAO_FECHOU', agora);
+  // Tentativa de adivinhar a senha: fica ativo até alguém resolver pelo app (não some no BLOQUEIO_FIM).
+  if (evento.tipo === 'BLOQUEIO_INICIO') await abrirAlerta('SENHAS_INCORRETAS', agora);
   if (evento.tipo === 'ALARME_DESLIGADO') await resolverAlertasDoTipo(['PORTA_FORCADA'], agora);
   if (evento.tipo === 'PORTA_FECHADA') await resolverAlertasDoTipo(['PORTA_NAO_FECHOU', 'ABERTA_DEMAIS'], agora);
 

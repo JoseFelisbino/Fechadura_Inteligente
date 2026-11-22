@@ -76,7 +76,8 @@ Comandos: `ABRIR_PORTA`, `FECHAR_PORTA`, `DESLIGAR_ALARME`, `TESTAR_BUZZER`, `DE
 ## Backend
 
 - Modelos: `Evento`, `Leitura` (máx. 1 a cada 5 s, apagadas após 24 h), `Senha`, `Comando` (expira em 15 s),
-  `Alerta` (`PORTA_FORCADA`, `PORTA_NAO_FECHOU`, `ABERTA_DEMAIS`, `OFFLINE`), `Configuracao` (linha única).
+  `Alerta` (`PORTA_FORCADA`, `PORTA_NAO_FECHOU`, `ABERTA_DEMAIS`, `OFFLINE`, `SENHAS_INCORRETAS` — aberto
+  no `BLOQUEIO_INICIO`, só o app resolve), `Configuracao` (linha única).
 - O estado atual fica em memória (`estado.service.ts`); 15 s sem estado = offline + alerta.
 - Rotas: `GET /api/estado`, `GET /api/eventos`, `GET /api/eventos/por-hora`, `GET /api/leituras`,
   `GET /api/alertas`, `PATCH /api/alertas/:id/resolver`, `GET/PUT/DELETE /api/senhas/:slot`,
@@ -91,6 +92,10 @@ Comandos: `ABRIR_PORTA`, `FECHAR_PORTA`, `DESLIGAR_ALARME`, `TESTAR_BUZZER`, `DE
 - Chama `/api` na mesma origem (proxy do Vite), para o celular só precisar de um endereço HTTPS.
 - SSE com recarga a cada 5 s se cair; sem conexão, mostra a última leitura (localStorage) e desativa botões.
 - Service worker: cache só do app shell; `/api` sempre pela rede.
+- Cada `SENHA_INCORRETA` recente (≤ 60 s) mostra uma faixa vermelha no topo de qualquer tela (some em 10 s,
+  conta as seguidas) e também notifica.
+- Notificação do navegador para alerta novo (vem pelo SSE, então só com o app aberto); liga em Ajustes,
+  preferência no localStorage (`src/utils/notificacoes.ts`). Não há Web Push.
 
 ## Forma de trabalhar
 

@@ -31,6 +31,22 @@ describe('Alertas', () => {
     expect(await ativos('PORTA_NAO_FECHOU')).toBe(0);
   });
 
+  it('teclado bloqueado (3 senhas erradas) abre SENHAS_INCORRETAS, que só o app resolve', async () => {
+    await doArduino(TOPICOS.eventos, evento('SENHA_INCORRETA'));
+    expect(await ativos('SENHAS_INCORRETAS')).toBe(0); // um erro sozinho não é alerta
+
+    await doArduino(TOPICOS.eventos, evento('BLOQUEIO_INICIO'));
+    await doArduino(TOPICOS.eventos, evento('BLOQUEIO_INICIO')); // novo bloqueio com o alerta ativo: não duplica
+    expect(await ativos('SENHAS_INCORRETAS')).toBe(1);
+
+    await doArduino(TOPICOS.eventos, evento('BLOQUEIO_FIM'));
+    expect(await ativos('SENHAS_INCORRETAS')).toBe(1); // continua até alguém ver
+
+    const alerta = await prisma.alerta.findFirstOrThrow({ where: { tipo: 'SENHAS_INCORRETAS' } });
+    await request(app).patch(`/api/alertas/${alerta.id}/resolver`);
+    expect(await ativos('SENHAS_INCORRETAS')).toBe(0);
+  });
+
   it('porta aberta mais que o tempo máximo (30 s) abre ABERTA_DEMAIS e resolve ao fechar', async () => {
     const t0 = new Date();
     await ficarOnline(t0, { porta: 'ABERTA', distanciaCm: 40 });

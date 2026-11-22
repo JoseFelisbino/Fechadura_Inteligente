@@ -10,7 +10,7 @@ import { formatarDataHora, haQuanto, TITULO_ALERTA } from '../utils/format';
 function ItemAlerta({ alerta, agora, aoResolver, desativado }: { alerta: Alerta; agora: number; aoResolver?: () => void; desativado?: boolean }) {
   return (
     <li className={`alerta ${alerta.status === 'ATIVO' ? 'alerta-ativo' : ''}`}>
-      <Icone nome={alerta.tipo === 'OFFLINE' ? 'semSinal' : 'alerta'} tamanho={20} />
+      <Icone nome={alerta.tipo === 'OFFLINE' ? 'semSinal' : alerta.tipo === 'SENHAS_INCORRETAS' ? 'chave' : 'alerta'} tamanho={20} />
       <div className="alerta-texto">
         <strong>{TITULO_ALERTA[alerta.tipo]}</strong>
         <span className="pequeno">{alerta.mensagem}</span>

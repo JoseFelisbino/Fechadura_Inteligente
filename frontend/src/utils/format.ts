@@ -99,6 +99,7 @@ export const TITULO_ALERTA: Record<TipoAlerta, string> = {
   PORTA_NAO_FECHOU: 'Porta não fechou',
   ABERTA_DEMAIS: 'Aberta tempo demais',
   OFFLINE: 'Fechadura offline',
+  SENHAS_INCORRETAS: 'Senhas incorretas',
 };
 
 const MOTIVOS: Record<string, string> = {

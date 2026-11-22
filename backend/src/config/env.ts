@@ -11,6 +11,10 @@ const envSchema = z.object({
   MQTT_USERNAME: z.string().optional().default(''),
   MQTT_PASSWORD: z.string().optional().default(''),
 
+  // HTTPS opcional (para o app da Vercel chamar a API pela rede local). Vazio = HTTP.
+  HTTPS_CERT_FILE: z.string().optional().default(''),
+  HTTPS_KEY_FILE: z.string().optional().default(''),
+
   // Regras de tempo
   OFFLINE_APOS_SEGUNDOS: z.coerce.number().int().positive().default(15),
   COMANDO_EXPIRA_SEGUNDOS: z.coerce.number().int().positive().default(15),

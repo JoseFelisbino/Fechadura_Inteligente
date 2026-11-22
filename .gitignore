@@ -12,6 +12,7 @@ mosquitto/config/passwd
 # Firmware
 firmware/**/.pio/
 firmware/**/secrets.h
+backend/certs/
 
 # Frontend
 *.tsbuildinfo

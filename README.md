@@ -93,20 +93,60 @@ celular tentaria chamar o `localhost` dele mesmo.
 
 ### 4. Sem o Arduino: modo simulação
 
-```bash
-cd backend
-npm run simular             # estados a cada 2 s, cenas aleatórias e respostas aos comandos
-npm run simular -- --calmo  # só responde aos comandos
-```
+O simulador (`backend/scripts/simular.ts`) se conecta ao Mosquitto **como se fosse a placa**: publica o
+estado a cada 2 s, gera cenas aleatórias (acesso liberado, senha errada, porta aberta, porta forçada...) e
+responde aos comandos do app (abrir porta, trocar senha etc.). Para o backend e o app não há diferença
+entre ele e o Arduino.
 
-Não rode o simulador com a placa ligada: os dois usam os mesmos tópicos.
+**Ele não liga sozinho.** Sem a placa e sem o simulador, depois de 15 s o app mostra a fechadura
+**Offline** (e abre o alerta `OFFLINE`).
+
+1. Com o Mosquitto e o backend rodando (passos 1 e 2), abra outro terminal:
+
+   ```bash
+   cd backend
+   npm run simular             # estados a cada 2 s, cenas aleatórias e respostas aos comandos
+   npm run simular -- --calmo  # só responde aos comandos (bom para demonstrar passo a passo)
+   ```
+
+2. No app, a fechadura aparece **Online** em poucos segundos. O terminal mostra cada evento e comando.
+3. Para parar, aperte **Ctrl+C** no terminal do simulador.
 
 ### 5. Arduino
 
-Veja [firmware/fechadura_r4wifi/README.md](firmware/fechadura_r4wifi/README.md). Em resumo: instale a placa
-**Arduino UNO R4 Boards** e as bibliotecas **Servo**, **MQTT** (Joel Gaehwiler) e **ArduinoJson**.
-Depois copie `secrets.example.h` para `secrets.h` e preencha o Wi-Fi (2,4 GHz), o IP do computador que roda
-o Mosquitto e o mesmo usuário e senha MQTT do `backend/.env`.
+Detalhes em [firmware/fechadura_r4wifi/README.md](firmware/fechadura_r4wifi/README.md).
+
+1. Na Arduino IDE, instale a placa **Arduino UNO R4 Boards** e as bibliotecas **Servo**, **MQTT**
+   (Joel Gaehwiler) e **ArduinoJson**.
+2. Copie `firmware/fechadura_r4wifi/fechadura_r4wifi/secrets.example.h` para `secrets.h` (mesma pasta,
+   fica fora do Git) e preencha:
+
+   ```c
+   #define WIFI_SSID "nome-do-wifi"                       // rede 2,4 GHz
+   #define WIFI_PASSWORD "senha-do-wifi"
+   #define MQTT_HOST "fechadurainteligente.duckdns.org"   // ou o IP do PC, ex.: "192.168.0.10"
+   #define MQTT_PORT 1883
+   #define MQTT_USER "backend"        // o mesmo MQTT_USERNAME do backend/.env
+   #define MQTT_PASSWORD "..."        // o mesmo MQTT_PASSWORD do backend/.env
+   ```
+
+   Usando o nome do DuckDNS (seção C abaixo) em `MQTT_HOST`, não é preciso regravar a placa quando o IP do
+   PC muda: basta atualizar o IP no DuckDNS. Se a placa não conectar pelo nome, use o IP.
+3. Grave a placa (*Upload* na IDE ou `pio run -t upload`). Em até ~30 s o app mostra a fechadura **Online**
+   com a distância real do sensor.
+
+### Trocar do simulador para o Arduino
+
+1. **Pare o simulador** (Ctrl+C). Os dois nunca podem rodar juntos: usam os mesmos tópicos e o app
+   mostraria os dados misturados.
+2. Ligue a placa já gravada (passo 5). Mosquitto e backend continuam como estão; nada muda no app.
+3. Confira no app: **Online** e a distância mudando quando você mexe a mão na frente do sensor.
+
+Para voltar ao simulador, desligue a placa (ou tire da tomada) e rode `npm run simular` de novo.
+
+Se a placa não conectar ao broker, confira o Monitor Serial (115200) e o firewall do Windows: a porta
+**1883** precisa aceitar conexões da rede local. Na primeira vez que o Docker Desktop roda, o Windows
+pergunta: clique em **Permitir** (marcando também redes públicas).
 
 ## Abrir e instalar no celular
 
@@ -135,8 +175,83 @@ Troque `192.168.0.10` pelo IP do computador. O celular precisa confiar na CA: co
 (`mkcert -CAROOT` mostra onde está) e instale em Configurações → Segurança → Certificados (Android) ou
 Ajustes → Geral → Perfil (iPhone, depois ative em Sobre → Confiança de Certificados).
 
+**C) App na Vercel + API pela rede local (para várias pessoas instalarem)**
+
+O app fica em `https://fechadura-inteligente.vercel.app` (qualquer um instala pelo link ou QR code) e
+chama a API no PC por um nome do DuckDNS que aponta para o **IP local** do PC. A API continua acessível só
+dentro do Wi-Fi.
+
+1. Em [duckdns.org](https://www.duckdns.org), crie o subdomínio, coloque o IP local do PC em *current ip*
+   (veja com `ipconfig`) e deixe *ipv6* vazio. Salve o token em `frontend/certs/duckdns-token.txt`.
+2. Gere o certificado (Let's Encrypt, validação por DNS; instale o `lego` com `winget install GoACME.lego`):
+
+   ```powershell
+   $env:DUCKDNS_TOKEN = ((Get-Content frontend\certs\duckdns-token.txt -Raw).Trim() -replace '^token=', '')
+   lego run --accept-tos --dns duckdns --dns.resolvers "1.1.1.1:53,8.8.8.8:53" `
+     --domains fechadurainteligente.duckdns.org --path backend\certs\lego
+   ```
+
+   O certificado vale cerca de 90 dias. Para renovar, rode o mesmo comando e reinicie o backend.
+3. No `backend/.env`, aponte `HTTPS_CERT_FILE` e `HTTPS_KEY_FILE` para os arquivos em
+   `backend/certs/lego/certificates/` e rode `npm run dev`. A API passa a responder em
+   `https://fechadurainteligente.duckdns.org:3000/api`.
+4. Na Vercel, defina `VITE_API_URL=https://fechadurainteligente.duckdns.org:3000/api` e faça um novo deploy.
+
+Se o PC mudar de rede, atualize o IP no DuckDNS (o certificado continua valendo). No primeiro acesso, o
+Chrome pergunta se o site pode acessar a rede local: toque em **Permitir**. Com HTTPS ligado no backend, o
+proxy do `npm run dev` / `npm run celular` local não alcança mais a API (ele usa `http://`).
+
 **Instalar:** no Chrome do Android, menu ⋮ → **Instalar app** (ou o botão em Ajustes). No iPhone (Safari):
 Compartilhar → **Adicionar à Tela de Início**.
+
+## Usar no celular (dia a dia, com a seção C)
+
+**Precisa estar ligado no PC:** Mosquitto (`docker compose up -d`), backend (`npm run dev`) e o Arduino
+**ou** o simulador. O frontend local não é necessário: o app vem da Vercel.
+
+**Cada pessoa:**
+
+1. Conecta o celular **no mesmo Wi-Fi do PC**.
+2. Abre `https://fechadura-inteligente.vercel.app` (ou lê o QR code).
+3. Se o Chrome perguntar se o site pode acessar dispositivos na rede local, toca em **Permitir**.
+4. Instala: Android (Chrome) ⋮ → **Instalar app**; iPhone (Safari) Compartilhar → **Adicionar à Tela de
+   Início**.
+5. Confere em **Ajustes**: conexão "tempo real (SSE)" e fechadura "online".
+
+**Sinais no app:**
+
+| O app mostra | Significa | O que fazer |
+|---|---|---|
+| Faixa **"Sem conexão"** | O celular não alcança a API | Mesmo Wi-Fi do PC? Backend rodando? IP do DuckDNS certo? |
+| Selo **Offline** no Início | A API responde, mas a placa/simulador não manda estado | Ligue a placa ou rode `npm run simular` |
+| **Online** | Tudo funcionando | — |
+
+**Mudou de rede ou de PC** (ex.: hotspot na apresentação, outro computador): o IP do PC muda, então
+atualize o DuckDNS. Veja o novo IP com `ipconfig` ("Adaptador de Rede sem Fio Wi-Fi" → "Endereço IPv4") e:
+
+- **pelo site:** entre em [duckdns.org](https://www.duckdns.org), na linha `fechadurainteligente` troque o
+  *current ip*, deixe *ipv6* vazio e clique em **update ip**; ou
+- **sem login, pelo PowerShell** (na raiz do projeto, usa o token salvo):
+
+  ```powershell
+  $ip = (Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias Wi-Fi).IPAddress
+  $token = (Get-Content frontend\certs\duckdns-token.txt -Raw).Trim() -replace '^token=', ''
+  Invoke-RestMethod "https://www.duckdns.org/update?domains=fechadurainteligente&token=$token&ip=$ip"
+  ```
+
+  Sempre passe `ip=` com o IP **local**: sem ele, o DuckDNS grava o IP público da internet e o app para.
+
+Confira com `nslookup fechadurainteligente.duckdns.org 1.1.1.1`. O celular pode levar alguns minutos para
+ver o IP novo. O certificado e o app instalado continuam valendo; ninguém precisa reinstalar.
+
+**Rodar em outro PC:** instale Node.js e Docker Desktop, clone o repositório e copie os arquivos que ficam
+fora do Git (`backend/.env`, `mosquitto/config/passwd`, a pasta `backend/certs/` e o
+`frontend/certs/duckdns-token.txt`). Rode os passos 1 e 2 de "Como rodar", atualize o IP no DuckDNS e, quando
+o Windows perguntar sobre o firewall para o Node.js e o Docker, clique em **Permitir** (marcando redes
+públicas). Se a placa usa o IP em `MQTT_HOST`, grave-a de novo com o IP novo.
+
+> A API não tem login: qualquer pessoa no mesmo Wi-Fi pode comandar a fechadura. Para a apresentação, prefira
+> uma rede própria (roteador ou hotspot) ao Wi-Fi aberto da faculdade.
 
 ## Montagem (ligações)
 
@@ -184,7 +299,7 @@ Abra o Monitor Serial (115200). Todos os eventos aparecem lá. `s` mostra o esta
 
 ## Testes
 
-- `backend`: `npm test` (35 testes: eventos, comandos com resposta e expiração, senhas, alertas, estado,
+- `backend`: `npm test` (36 testes: eventos, comandos com resposta e expiração, senhas, alertas, estado,
   leituras e ajustes) e `npm run typecheck`
 - `frontend`: `npm test` (14 testes) e `npm run typecheck`
 - `firmware`: `pio run` (compila) ou *Verify* na Arduino IDE

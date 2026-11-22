@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import https from 'node:https';
 import { createApp } from './app';
 import { env } from './config/env';
 import { prisma } from './config/prisma';
@@ -10,9 +12,18 @@ async function main() {
   await prisma.$connect();
   await garantirDadosIniciais();
   const app = createApp();
-  const server = app.listen(env.PORT, () => {
-    logger.info(`API ouvindo em http://localhost:${env.PORT}/api (${env.NODE_ENV}).`);
-  });
+
+  // Com certificado configurado, a API responde em HTTPS (o app da Vercel só pode chamar https://).
+  // Sem certificado, continua em HTTP como antes.
+  const usarHttps = Boolean(env.HTTPS_CERT_FILE && env.HTTPS_KEY_FILE);
+  const aoIniciar = () => {
+    logger.info(`API ouvindo em ${usarHttps ? 'https' : 'http'}://localhost:${env.PORT}/api (${env.NODE_ENV}).`);
+  };
+  const server = usarHttps
+    ? https
+        .createServer({ cert: fs.readFileSync(env.HTTPS_CERT_FILE), key: fs.readFileSync(env.HTTPS_KEY_FILE) }, app)
+        .listen(env.PORT, aoIniciar)
+    : app.listen(env.PORT, aoIniciar);
 
   iniciarMonitor();
   iniciarMqtt();

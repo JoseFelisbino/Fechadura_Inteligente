@@ -52,7 +52,7 @@ export interface AcessosHora {
   negados: number;
 }
 
-export type TipoAlerta = 'PORTA_FORCADA' | 'PORTA_NAO_FECHOU' | 'ABERTA_DEMAIS' | 'OFFLINE';
+export type TipoAlerta = 'PORTA_FORCADA' | 'PORTA_NAO_FECHOU' | 'ABERTA_DEMAIS' | 'OFFLINE' | 'SENHAS_INCORRETAS';
 
 export interface Alerta {
   id: string;

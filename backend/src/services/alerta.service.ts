@@ -8,6 +8,7 @@ export const MENSAGENS_ALERTA: Record<TipoAlerta, string> = {
   PORTA_NAO_FECHOU: 'A porta não fechou depois de ser liberada.',
   ABERTA_DEMAIS: 'A porta está aberta há mais tempo que o permitido.',
   OFFLINE: 'A fechadura está sem comunicação.',
+  SENHAS_INCORRETAS: 'O teclado foi bloqueado por 3 senhas incorretas seguidas.',
 };
 
 /**

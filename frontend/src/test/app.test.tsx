@@ -248,6 +248,97 @@ describe('Alertas', () => {
   });
 });
 
+// ---------------------------------------------------------------- Notificações
+
+describe('Notificações', () => {
+  function notificacaoFalsa(permissaoInicial: NotificationPermission) {
+    const criadas: { titulo: string; corpo?: string }[] = [];
+    class NotificationFalsa {
+      static permission = permissaoInicial;
+      static requestPermission = vi.fn(async () => {
+        NotificationFalsa.permission = 'granted';
+        return 'granted' as const;
+      });
+      constructor(titulo: string, opcoes?: NotificationOptions) {
+        criadas.push({ titulo, corpo: opcoes?.body });
+      }
+    }
+    vi.stubGlobal('Notification', NotificationFalsa);
+    return { criadas, NotificationFalsa };
+  }
+
+  // Chega um alerta pelo SSE; espera o app recarregar o estado e mostrar a notificação.
+  async function emitirAlerta(alerta: object) {
+    await act(async () => {
+      sse().emit('alerta', alerta);
+      await new Promise((r) => setTimeout(r, 30));
+    });
+  }
+
+  async function emitirEvento(e: Evento) {
+    await act(async () => {
+      sse().emit('evento', e);
+      await new Promise((r) => setTimeout(r, 30));
+    });
+  }
+
+  it('ativa em Ajustes e avisa alerta novo (resolvido não avisa)', async () => {
+    const { criadas, NotificationFalsa } = notificacaoFalsa('default');
+    const user = userEvent.setup();
+    abrir('/ajustes');
+    await user.click(await screen.findByRole('button', { name: /Ativar notificações/ }));
+    expect(NotificationFalsa.requestPermission).toHaveBeenCalled();
+    expect(await screen.findByRole('button', { name: 'Desativar' })).toBeInTheDocument();
+
+    const alerta = { id: 'a1', tipo: 'SENHAS_INCORRETAS', mensagem: 'Teclado bloqueado.', criadoEm: new Date().toISOString(), resolvidoEm: null };
+    await emitirAlerta({ ...alerta, status: 'ATIVO' });
+    expect(criadas).toEqual([{ titulo: 'Fechadura: Senhas incorretas', corpo: 'Teclado bloqueado.' }]);
+
+    await emitirAlerta({ ...alerta, status: 'RESOLVIDO' });
+    expect(criadas).toHaveLength(1);
+  });
+
+  it('desativada não avisa nada', async () => {
+    const { criadas } = notificacaoFalsa('granted'); // permissão dada, mas o usuário não ligou no app
+    abrir('/');
+    await screen.findByText('Ana', { exact: false });
+    await emitirAlerta({ id: 'a2', tipo: 'PORTA_FORCADA', status: 'ATIVO', mensagem: 'x', criadoEm: '', resolvidoEm: null });
+    expect(criadas).toHaveLength(0);
+  });
+
+  it('senha incorreta aparece na hora em qualquer tela, conta as seguidas e notifica', async () => {
+    localStorage.setItem('fechadura:notificacoes', 'sim');
+    const { criadas } = notificacaoFalsa('granted');
+    const user = userEvent.setup();
+    abrir('/graficos');
+    await waitFor(() => expect(sse()).toBeDefined());
+
+    await emitirEvento(evento({ tipo: 'SENHA_INCORRETA', origem: 'TECLADO' }));
+    const faixa = () => document.querySelector('.faixa-senha');
+    expect(faixa()).toHaveTextContent('Senha incorreta no teclado');
+    expect(criadas).toEqual([{ titulo: 'Fechadura: senha incorreta', corpo: 'Alguém digitou uma senha errada no teclado.' }]);
+
+    await emitirEvento(evento({ tipo: 'SENHA_INCORRETA', origem: 'TECLADO_SAIDA' }));
+    expect(faixa()).toHaveTextContent('Senha incorreta na saída (2 seguidas)');
+
+    await user.click(screen.getByRole('button', { name: 'Fechar aviso' }));
+    expect(faixa()).toBeNull();
+  });
+
+  it('senha incorreta antiga (fila reenviada ao reconectar) não vira aviso', async () => {
+    abrir('/');
+    await waitFor(() => expect(sse()).toBeDefined());
+    await emitirEvento(evento({ tipo: 'SENHA_INCORRETA', ocorridoEm: new Date(Date.now() - 5 * 60_000).toISOString() }));
+    expect(document.querySelector('.faixa-senha')).toBeNull();
+  });
+
+  it('mostra como liberar quando o navegador bloqueou', async () => {
+    notificacaoFalsa('denied');
+    abrir('/ajustes');
+    expect(await screen.findByText(/notificações foram bloqueadas/)).toBeInTheDocument();
+  });
+});
+
 // ---------------------------------------------------------------- Formatação
 
 describe('Formatação', () => {

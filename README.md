@@ -42,9 +42,12 @@ real e permite comandar a fechadura pelo celular.
   guardadas por 24 h), senhas, comandos (expiram em 15 s sem resposta), alertas e ajustes.
 - **Alertas** (um por ocorrência): `PORTA_FORCADA` (resolvido ao desligar o alarme), `PORTA_NAO_FECHOU`
   (resolvido quando a porta fecha), `ABERTA_DEMAIS` (porta aberta mais que o tempo máximo, padrão 30 s) e
-  `OFFLINE` (15 s sem estado, ou o testamento do broker).
+  `OFFLINE` (15 s sem estado, ou o testamento do broker) e `SENHAS_INCORRETAS` (teclado bloqueado por 3
+  senhas erradas; fica ativo até ser resolvido no app).
 - **PWA:** tempo real por SSE. Se o SSE cair, recarrega a cada 5 s. Sem conexão, mostra a última leitura
-  com o aviso "sem conexão" e desativa os botões.
+  com o aviso "sem conexão" e desativa os botões. Cada senha incorreta digitada aparece na hora numa faixa vermelha
+  no topo do app. Em **Ajustes → Notificações** dá para ligar notificações
+  do navegador para senhas incorretas e alertas novos (só com o app aberto, e o navegador exige HTTPS ou localhost).
 
 ## Pré-requisitos
 

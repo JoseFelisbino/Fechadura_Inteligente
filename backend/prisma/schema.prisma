@@ -74,6 +74,7 @@ enum TipoAlerta {
   PORTA_NAO_FECHOU
   ABERTA_DEMAIS
   OFFLINE
+  SENHAS_INCORRETAS // teclado bloqueado (3 senhas erradas); resolvido pelo app
 }
 
 enum StatusAlerta {

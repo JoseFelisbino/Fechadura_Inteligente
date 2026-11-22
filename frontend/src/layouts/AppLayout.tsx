@@ -1,6 +1,7 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { Icone, type NomeIcone } from '../components/Icone';
 import { useFechadura } from '../contexts/FechaduraContext';
+import { formatarHora } from '../utils/format';
 
 const ABAS: { para: string; rotulo: string; icone: NomeIcone }[] = [
   { para: '/', rotulo: 'Início', icone: 'inicio' },
@@ -20,7 +21,7 @@ const TITULOS: Record<string, string> = {
 };
 
 export function AppLayout() {
-  const { estado, semRede, conexao } = useFechadura();
+  const { estado, semRede, conexao, avisoSenha, fecharAvisoSenha } = useFechadura();
   const { pathname } = useLocation();
   const alertas = estado?.alertasAtivos ?? 0;
 
@@ -42,6 +43,19 @@ export function AppLayout() {
       {semRede && (
         <div className="faixa-offline" role="status">
           <Icone nome="semSinal" tamanho={16} /> Sem conexão — mostrando a última leitura. Os botões ficam desativados.
+        </div>
+      )}
+
+      {avisoSenha && (
+        <div className="faixa-senha" role="alert">
+          <Icone nome="chave" tamanho={18} />
+          <span>
+            <strong>Senha incorreta</strong> {avisoSenha.saida ? 'na saída' : 'no teclado'}
+            {avisoSenha.tentativas > 1 && ` (${avisoSenha.tentativas} seguidas)`} às {formatarHora(avisoSenha.ultimaEm)}
+          </span>
+          <button type="button" className="botao-icone" aria-label="Fechar aviso" onClick={fecharAvisoSenha}>
+            ×
+          </button>
         </div>
       )}
 

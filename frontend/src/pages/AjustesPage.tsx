@@ -6,6 +6,13 @@ import { useComando } from '../hooks/useComando';
 import { useDados } from '../hooks/useDados';
 import { api } from '../services/api';
 import { formatarDataHora } from '../utils/format';
+import {
+  ativarNotificacoes,
+  desativarNotificacoes,
+  notificar,
+  situacaoNotificacao,
+  type SituacaoNotificacao,
+} from '../utils/notificacoes';
 
 interface PromptInstalacao extends Event {
   prompt: () => Promise<void>;
@@ -36,6 +43,49 @@ function Instalar() {
     <button type="button" className="botao botao-secundario" onClick={() => void prompt.prompt().then(() => setPrompt(null))}>
       <Icone nome="instalar" tamanho={18} /> Instalar app
     </button>
+  );
+}
+
+/** Liga/desliga as notificações do navegador para alertas novos (só com o app aberto). */
+function Notificacoes() {
+  const [situacao, setSituacao] = useState<SituacaoNotificacao>(situacaoNotificacao);
+
+  if (situacao === 'sem-suporte')
+    return <p className="muted pequeno">Este navegador não mostra notificações aqui (é preciso abrir o app por HTTPS).</p>;
+  if (situacao === 'bloqueada')
+    return (
+      <p className="muted pequeno">
+        As notificações foram bloqueadas. Libere nas permissões do site (cadeado ao lado do endereço) e recarregue.
+      </p>
+    );
+  if (situacao === 'desativada')
+    return (
+      <>
+        <p className="muted pequeno">Avisa cada senha incorreta, teclado bloqueado, porta forçada, porta aberta demais, porta que não fechou e fechadura offline.</p>
+        <button type="button" className="botao botao-secundario" onClick={() => void ativarNotificacoes().then(setSituacao)}>
+          <Icone nome="sino" tamanho={18} /> Ativar notificações
+        </button>
+      </>
+    );
+  return (
+    <>
+      <p className="muted pequeno">Ativadas neste aparelho. Funcionam enquanto o app estiver aberto (mesmo em segundo plano).</p>
+      <div className="linha-botoes">
+        <button type="button" className="botao botao-secundario" onClick={() => void notificar('Fechadura', 'Notificação de teste.', 'teste')}>
+          Testar
+        </button>
+        <button
+          type="button"
+          className="botao botao-secundario"
+          onClick={() => {
+            desativarNotificacoes();
+            setSituacao(situacaoNotificacao());
+          }}
+        >
+          Desativar
+        </button>
+      </div>
+    </>
   );
 }
 
@@ -121,6 +171,11 @@ export function AjustesPage() {
             <strong>{formatarDataHora(estado?.ultimaComunicacao)}</strong>
           </li>
         </ul>
+      </section>
+
+      <section className="cartao">
+        <h3>Notificações</h3>
+        <Notificacoes />
       </section>
 
       <section className="cartao">
